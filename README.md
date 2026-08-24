@@ -23,8 +23,6 @@ through modern technologies, collaboration, and best practices.
 
 ---
 
-## By the Numbers
-
 <div align="center">
 
 | 🖥️ Systems | 👥 Users Served | 🧩 Domains | 🏛️ Scope |
@@ -35,7 +33,8 @@ through modern technologies, collaboration, and best practices.
 
 ---
 
-## About
+<details open>
+<summary><b>📖 About</b>&nbsp;</summary>
 
 DIC-ISDS is the institutional technology arm of **UPLB**, responsible for designing,
 building, and maintaining the enterprise information systems that power the university's
@@ -46,7 +45,10 @@ We're driving UPLB's digital transformation — building secure, reliable, and
 user-centric systems that improve operational efficiency and institutional
 decision-making.
 
-## Mission
+</details>
+
+<details>
+<summary><b>🎯 Mission</b>&nbsp;</summary>
 
 - 🏗️ **Develop** enterprise-grade systems for institutional management
 - 🔧 **Maintain** a high-quality codebase built on best practices
@@ -54,7 +56,10 @@ decision-making.
 - 💡 **Innovate** through emerging technologies and methodologies
 - 🤝 **Support** stakeholders with dependable IT solutions
 
-## What We Build
+</details>
+
+<details>
+<summary><b>🛠️ What We Build</b>&nbsp;</summary>
 
 Our systems span the university's core operations:
 
@@ -69,7 +74,10 @@ Our systems span the university's core operations:
 | 📢 **Communications** | University-wide announcements & notices |
 | 🚀 **Career Services** | Job postings, career resources, alumni network |
 
-## Public Repositories
+</details>
+
+<details>
+<summary><b>📂 Public Repositories</b>&nbsp;</summary>
 
 Some of the systems maintained by the organization (if public):
 
@@ -81,14 +89,20 @@ Some of the systems maintained by the organization (if public):
 
 > Browse all systems under the **Repositories** tab.
 
-## Tech Stack
+</details>
+
+<details>
+<summary><b>⚙️ Tech Stack</b>&nbsp;</summary>
 
 - **Primary language:** PHP (~80% of systems)
 - **Modern framework:** Laravel with Blade templates
 - **Direction:** Migrating core systems to Laravel, adopting CI/CD, containerization,
   API-first design, and cloud-native architecture.
 
-## How It Fits Together
+</details>
+
+<details>
+<summary><b>🧭 How It Fits Together</b>&nbsp;</summary>
 
 Our systems are designed to work as one connected ecosystem rather than isolated apps:
 
@@ -97,17 +111,25 @@ Our systems are designed to work as one connected ecosystem rather than isolated
 - 🧩 Core records — personnel, students, finance — act as **single sources of truth** that other systems build on.
 - 📈 An **administrative dashboard** aggregates data from all systems for monitoring and decision-making.
 
-## Roadmap Highlights
+</details>
+
+<details>
+<summary><b>🗺️ Roadmap Highlights</b>&nbsp;</summary>
 
 - **Now:** Stabilize PHP systems · standardize monitoring, logging & docs · begin Laravel migration
 - **Next:** Complete Laravel migration · microservices where appropriate · Docker/Kubernetes · testing frameworks
 - **Later:** Cloud-native architecture · AI/ML for predictive analytics · mobile-first apps · advanced security standards
 
-## Get Involved
+</details>
+
+<details>
+<summary><b>🤝 Get Involved</b>&nbsp;</summary>
 
 - 🎓 We're part of the **UPLB** community — students and staff interested in our work are welcome to reach out.
 - 🐛 Found an issue in one of our public systems? Open an issue on the relevant repository.
 - 🤝 For collaboration, integration, or support inquiries, contact the DIC-ISDS team through official UPLB channels.
+
+</details>
 
 ---
 
