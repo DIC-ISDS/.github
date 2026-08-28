@@ -1,42 +1,126 @@
 # The Docker Environment
 
-A walkthrough of how a project in this family runs in Docker: what the containers
-are, what each file in `.docker/` is for, how to start it, and how to point the
-same setup at a different application.
+How a project in this family runs in Docker: what the containers are, what each
+file in `.docker/` does, how to start it, and how to reuse the setup on another
+app. If you just want it running, go to [section 7](#7-step-by-step-setup).
 
-There are two halves to the story. The development half — a bind-mounted working
-copy, php-fpm, nginx, Postgres, Redis — is what most of these repos have running
-today. The production half is a three-stage build that throws most of itself
-away before shipping. Both are covered, because the second is where you end up
-once a project stops being local-only.
-
-Screenshots live in `docs/images/`. The filenames below are fixed, so dropping a
-matching file in place is all it takes for the image to appear. Until then the
-placeholder line stays visible on purpose.
+Two setups are covered. Development is a bind-mounted working copy with php-fpm,
+nginx, Postgres and Redis — that's what most of these repos run today. Production
+is a multi-stage build that ships without the build tools.
 
 ---
 
-## 1. Placeholders in this guide
+## Contents
 
-This guide is written to be copied. Anywhere you see one of these, substitute
-your own value:
+- [1. Placeholders](#1-placeholders)
+- [2. What to install](#2-what-to-install) — [Windows](#windows) · [macOS](#macos) · [Linux](#linux)
+  - [What you don't need on the host](#what-you-dont-need-on-the-host)
+- [3. Project layout](#3-project-layout)
+- [4. The shape of it](#4-the-shape-of-it)
+- [5. The services](#5-the-services)
+- [6. What's in `.docker/`, and what's actually wired up](#6-whats-in-docker-and-whats-actually-wired-up)
+  - [Why the inert files are there](#why-the-inert-files-are-there)
+  - [What the dev PHP image gives you](#what-the-dev-php-image-gives-you)
+- [7. Step-by-step setup](#7-step-by-step-setup)
+  - [Step 1: Check the prerequisites](#step-1-check-the-prerequisites)
+  - [Step 2: Get the code](#step-2-get-the-code)
+  - [Step 3: Write `.env` before anything starts](#step-3-write-env-before-anything-starts)
+  - [Step 4: Point the hostname at your machine](#step-4-point-the-hostname-at-your-machine)
+  - [Step 5: Build and start](#step-5-build-and-start)
+  - [Step 6: Check all five containers are up](#step-6-check-all-five-containers-are-up)
+  - [Step 7: Install dependencies and generate the app key](#step-7-install-dependencies-and-generate-the-app-key)
+  - [Step 8: Create the schema](#step-8-create-the-schema)
+  - [Step 9: Build the front-end assets](#step-9-build-the-front-end-assets)
+  - [Step 10: Check the PHP config is actually applied](#step-10-check-the-php-config-is-actually-applied)
+  - [Step 11: Open it](#step-11-open-it)
+  - [Step 12: Start the optional processes](#step-12-start-the-optional-processes)
+  - [After the first time](#after-the-first-time)
+- [8. What it serves](#8-what-it-serves)
+  - [Front-end assets](#front-end-assets)
+- [9. What the code may expect that Compose doesn't start](#9-what-the-code-may-expect-that-compose-doesnt-start)
+- [10. Building for production](#10-building-for-production)
+  - [Overriding Compose for production](#overriding-compose-for-production)
+- [11. Reusing this on another app](#11-reusing-this-on-another-app)
+  - [Where to add your own things](#where-to-add-your-own-things)
+- [12. When it breaks](#12-when-it-breaks)
+- [13. Command reference](#13-command-reference)
+
+---
+
+## 1. Placeholders
+
+Substitute your own values wherever you see these:
 
 | Placeholder | Means | Example |
 | --- | --- | --- |
 | `{project}` | Your project slug, usually the directory name. Used as the container-name prefix. | `uplb-sims`, `uplb-tks` |
 | `{project}.local` | The development hostname nginx answers on. | `uplb-ams.local` |
-| `{registry}` | Your container registry, if you push images. | `myregistry.azurecr.io` |
+| `{repository-url}` | The git remote you clone from. | `git@github.com:org/uplb-sims.git` |
 
-So `{project}-php` means the PHP container — `uplb-sims-php` in one checkout,
-`uplb-tks-php` in another. The names have to differ per project, and section 10
-explains why that bites sooner than you would expect.
+So `{project}-php` is `uplb-sims-php` in one checkout and `uplb-tks-php` in
+another. The names have to differ per project — section 11 covers why.
 
 ---
 
-## 2. How the project should be laid out
+## 2. What to install
 
-The full layout, development and production together. Not every project needs
-every file — the third column says what happens if it is absent.
+Only Docker and git go on your machine. PHP, Composer, Node, Postgres and Redis
+all live in the containers.
+
+### Windows
+
+| Install | Why | How |
+| --- | --- | --- |
+| WSL 2 | Docker Desktop's backend, and the shell you'll run everything in | `wsl --install` in an Administrator PowerShell, then reboot |
+| Docker Desktop | Docker Engine plus Compose v2 | `winget install Docker.DockerDesktop`, or download from docker.com |
+| Git | Cloning the project | `winget install Git.Git`, or `sudo apt install git` inside WSL |
+| Windows Terminal | Sane terminal for the WSL shell | `winget install Microsoft.WindowsTerminal` |
+
+Four Windows-specific things worth doing once:
+
+- In Docker Desktop, turn on **Settings → Resources → WSL Integration** for your
+  distro. Without it, `docker` isn't on the PATH inside WSL.
+- Keep the project inside the WSL filesystem (`/home/you/projects/...`), not
+  `/mnt/c/...`. Bind mounts across the Windows drive are slow enough to notice on
+  every request.
+- Set `git config --global core.autocrlf input`. A CRLF `entrypoint.sh` fails in
+  the container with a confusing `\r: not found` error.
+- The hosts file is `C:\Windows\System32\drivers\etc\hosts`, and you have to
+  open the editor as Administrator to save it.
+
+### macOS
+
+| Install | Why | How |
+| --- | --- | --- |
+| Docker Desktop | Docker Engine plus Compose v2 | `brew install --cask docker`, or download from docker.com |
+| Git | Cloning the project | `xcode-select --install`, or `brew install git` |
+| Homebrew | Optional, but it's what makes the above one-liners | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` |
+
+Give Docker Desktop at least 4 GB of RAM under **Settings → Resources**;
+composer and the asset build are the parts that feel it. Apple silicon and Intel
+both work — the images used here have arm64 builds. If you'd rather not run
+Docker Desktop, OrbStack is a lighter drop-in and every command in this guide
+still applies.
+
+### Linux
+
+Docker Engine plus the `docker-compose-plugin` package from Docker's own repo
+(the distro `docker.io` package is usually too old for Compose v2), and git. Add
+yourself to the `docker` group so you're not typing `sudo` all day.
+
+### What you don't need on the host
+
+PHP, Composer, Node, npm, Postgres and Redis. Installing them locally is
+harmless, but nothing in this setup uses them — and a host Postgres already
+listening on 5432 will collide with the container, which is the first thing
+step 1 checks for.
+
+---
+
+## 3. Project layout
+
+Development and production together. Not every project needs every file; the
+second table says what happens if one is missing.
 
 ```
 project-root/
@@ -60,8 +144,7 @@ project-root/
 ├── docker-compose.prod.yml         production overrides, layered on the above
 ├── .dockerignore                   REQUIRED once anything does `COPY . /var/www`
 ├── docs/
-│   ├── docker-environment.md       this file
-│   └── images/                     screenshots referenced from the docs
+│   └── docker-environment.md       this file
 ├── composer.json
 ├── package.json
 └── ...application code...
@@ -70,21 +153,21 @@ project-root/
 | File | If missing |
 | --- | --- |
 | `php/Dockerfile.dev` | No development image; nothing to build |
-| `php/Dockerfile` | No production image — you would be shipping the dev one, source mount and build tools included |
+| `php/Dockerfile` | No production image — you'd ship the dev one, source mount and build tools included |
 | `php/php.ini` | Stock PHP defaults: `memory_limit 128M`, `upload_max_filesize 2M` |
-| `php/docker.conf` | fpm logs go somewhere you cannot see them; `catch_workers_output` off |
-| `php/www.conf` | Default pool sizing, usually fine until it is not |
+| `php/docker.conf` | fpm logs go somewhere you can't see them; `catch_workers_output` off |
+| `php/www.conf` | Default pool sizing |
 | `php/supervisord.conf` | You need separate containers for the queue worker and scheduler |
 | `php/entrypoint.sh` | `storage/` permission errors on first boot |
 | `nginx/*.conf` | nginx serves its default welcome page instead of your app |
 | `.dockerignore` | Slow builds, and `.env` plus `.git` baked into the image |
 | `docker-compose.prod.yml` | Two full compose files to keep in sync instead of one plus an override |
 
-The important line in that table is `.dockerignore`. A dev-only setup gets away
-without it because `Dockerfile.dev` copies no application code at all — the
-project arrives by bind mount. The moment you add the production Dockerfile with
-its `COPY . /var/www`, a missing `.dockerignore` means `node_modules`, `vendor`,
-`.git` and `.env` all land in the image. Add the file first:
+`.dockerignore` is the one to watch. A dev-only setup gets away without it
+because `Dockerfile.dev` copies no application code — the project arrives by bind
+mount. Add the production Dockerfile with its `COPY . /var/www` and suddenly
+`node_modules`, `vendor`, `.git` and `.env` all land in the image. Add the file
+first:
 
 ```
 .git
@@ -109,12 +192,11 @@ docker-compose*.yml
 
 ---
 
-## 3. The shape of it
+## 4. The shape of it
 
-Five containers sharing one network. The habit to build early: inside Docker,
-containers find each other by *service name*, never by `localhost`. Postgres is
-at `pg_db`, Redis at `redis`, php-fpm at `php`. Write `127.0.0.1` in `.env` and
-you are telling the PHP container to look inside itself.
+Five containers on one network. Inside Docker, containers reach each other by
+service name, not `localhost`. Postgres is `pg_db`, Redis is `redis`, php-fpm is
+`php`. Put `127.0.0.1` in `.env` and the PHP container looks inside itself.
 
 ```
                     host machine
@@ -132,15 +214,14 @@ you are telling the PHP container to look inside itself.
               . -> /var/www  (whole project, live)
 ```
 
-The bind mount is the whole trick of the development setup. Nothing about the
-application is baked into the image — the image is just PHP with the right
-extensions, and your working copy is mounted over `/var/www`. Edit a file on the
-host and the container sees it immediately, no rebuild.
-
+The bind mount is the point of the dev setup. Nothing app-specific is baked into
+the image — it's just PHP with the right extensions, and your working copy is
+mounted over `/var/www`. Edit a file on the host and the container sees it, no
+rebuild.
 
 ---
 
-## 4. The services
+## 5. The services
 
 | Service | Container | Image or build | Host port | What it does |
 | --- | --- | --- | --- | --- |
@@ -150,18 +231,18 @@ host and the container sees it immediately, no rebuild.
 | `adminer` | `{project}-adminer` | `adminer:latest` | `8080` | Browser database client, already pointed at `pg_db` |
 | `redis` | `{project}-redis` | `redis/redis-stack-server:latest` | `6379` | Cache, and the full-text search index |
 
-That last one matters more than it looks. Where a project uses RediSearch for
-full-text search, it has to be Redis *Stack*, not plain `redis` — the search code
-issues `FT.*` commands and the vanilla image does not ship the module. Swap in
-`redis:alpine` to save a few megabytes and search silently stops working.
+If the project uses RediSearch, it has to be Redis *Stack*, not plain `redis` —
+the search code sends `FT.*` commands and the vanilla image doesn't ship the
+module. Swap in `redis:alpine` to save a few megabytes and search stops working
+without saying so.
 
 ---
 
-## 5. What is in `.docker/`, and what is actually wired up
+## 6. What's in `.docker/`, and what's actually wired up
 
-A recurring trap in these repos: `.docker/php/` carries seven files, but only
-some of them are connected to anything. Configuration files do nothing unless the
-Dockerfile `COPY`s them or Compose mounts them, and nothing warns you.
+Common trap: `.docker/php/` carries seven files, but only some are connected to
+anything. Config files do nothing unless the Dockerfile `COPY`s them or Compose
+mounts them, and nothing warns you.
 
 | File | Wired how | What it is for |
 | --- | --- | --- |
@@ -173,20 +254,19 @@ Dockerfile `COPY`s them or Compose mounts them, and nothing warns you.
 | `php/entrypoint.sh` | `COPY` plus `ENTRYPOINT`, or a mount | Creates `storage/framework/{cache,views,sessions}`, fixes ownership at boot |
 | `php/.bashrc` | `COPY` to the container home | Shell aliases, plus a `phpd` alias running PHP with Xdebug at `host.docker.internal:9001` |
 
-**Check which of the bottom four your project actually applies.** Where a repo
-has trimmed the `COPY` lines out of `Dockerfile.dev`, the files sit there
-implying settings that are not in effect — `php.ini` says `memory_limit 2048M`
-while the container runs on 128M, and `upload_max_filesize 50M` while PHP rejects
-anything over 2M. nginx will happily accept a 100M upload and PHP will refuse it,
-which is a confusing way to spend an afternoon.
+**Check the bottom four in your project.** Where the `COPY` lines got trimmed out
+of `Dockerfile.dev`, those files sit there implying settings that aren't in
+effect — `php.ini` says `memory_limit 2048M` while the container runs on 128M,
+and `upload_max_filesize 50M` while PHP rejects anything over 2M. nginx accepts a
+100M upload and PHP refuses it.
 
-The quickest way to check:
+Check with:
 
 ```bash
-docker exec -it {project}-php php -i | grep -E "memory_limit|upload_max_filesize"
+docker compose exec php php -i | grep -E "memory_limit|upload_max_filesize"
 ```
 
-If those come back as `128M` and `2M`, the files are inert. Mount them:
+`128M` and `2M` mean the files are inert. Mount them:
 
 ```yaml
     volumes:
@@ -198,20 +278,19 @@ If those come back as `128M` and `2M`, the files are inert. Mount them:
     command: ["php-fpm"]
 ```
 
-One catch before wiring the entrypoint. Some copies of `entrypoint.sh` in this
-family end after the `chmod` and never hand off to the main process — used as an
-entrypoint as-is, the container fixes permissions and exits. Confirm yours ends
-with:
+One catch before wiring the entrypoint. Some copies of `entrypoint.sh` end after
+the `chmod` and never hand off to the main process, so the container fixes
+permissions and exits. Make sure yours ends with:
 
 ```sh
 # Hand off to the container's main process (php-fpm, from the Dockerfile CMD)
 exec "$@"
 ```
 
-### Why the inert files are there at all
+### Why the inert files are there
 
-They are inherited. `.docker/` gets copied from project to project, and the
-fuller ancestor version does the wiring that trimmed copies dropped:
+They're inherited. `.docker/` gets copied from project to project, and the fuller
+ancestor version does the wiring the trimmed copies dropped:
 
 ```dockerfile
 COPY php.ini /usr/local/etc/php/
@@ -223,82 +302,201 @@ CMD ["php-fpm"]
 ```
 
 It also clones `seebi/dircolors-solarized` into `/root`, which is what the
-`eval $(dircolors ~/dircolors-solarized/...)` line in `.bashrc` is looking for —
-without the clone, that line errors on every shell login.
+`eval $(dircolors ~/dircolors-solarized/...)` line in `.bashrc` looks for.
+Without the clone, that line errors on every shell login.
 
-So these are copy-forward leftovers, not unfinished features. Either wire them up
-or delete them; leaving them in place implying settings that are not active is
-the worst of the three options.
+They're leftovers, not unfinished features. Wire them up or delete them.
 
 ### What the dev PHP image gives you
 
 Compiled in: `sockets`, `zip`, `pdo_mysql`, `pdo_pgsql`, `pgsql`, `intl`,
-`pcntl`, and `gd` with freetype and jpeg. From PECL: `imagick` and `rdkafka`.
-On the system side: ImageMagick, Ghostscript for rasterising PDFs, git, vim,
-unzip, procps, node and npm, and the MySQL client. Composer is copied in from the
-official `composer:latest` image.
+`pcntl`, and `gd` with freetype and jpeg. From PECL: `imagick`. System side:
+ImageMagick, Ghostscript for rasterising PDFs, git, vim, unzip, procps, node and
+npm, and the MySQL client. Composer is copied in from the official
+`composer:latest` image.
 
-Both MySQL and Postgres drivers are present, which is why the same image drops
-into a MySQL project without edits — only `DB_CONNECTION` and the database
-service change.
+Both MySQL and Postgres drivers are there, so the same image drops into a MySQL
+project — only `DB_CONNECTION` and the database service change.
 
 ---
 
-## 6. Getting it running
+## 7. Step-by-step setup
+
+The first run, in order. Steps 1 to 6 can't be reordered, step 3 especially — it's
+only cheap to get right before the database volume exists.
+
+### Step 1: Check the prerequisites
+
+Docker and git, installed as section 2 describes. Compose has to be v2, since
+every command here is `docker compose`, not `docker-compose`:
 
 ```bash
-# first time, builds the PHP image
-docker compose up -d --build
-
-# every time after that
-docker compose up -d
-docker compose ps
-docker compose logs -f php
+docker --version
+docker compose version
+git --version
 ```
 
-Before that first `up`, make sure `.env` exists. Compose reads
-`${DB_DATABASE}`, `${DB_USERNAME}` and `${DB_PASSWORD}` straight out of it to
-create the Postgres user, and if the file is missing the database initialises
-with empty credentials. Worse, those credentials are only applied the first time
-the data volume is created, so fixing `.env` afterwards does not help — you have
-to `docker compose down -v` and start over, which takes the database with it.
-
-Everything PHP-side runs inside the container:
+Then check the five host ports are free — 80, 5432, 6379, 8080 and 5173.
+Anything already listening on one makes step 5 fail with a bind error:
 
 ```bash
-docker compose exec php php artisan migrate
-docker compose exec php php artisan test --compact
-docker compose exec php composer install
-docker compose exec php vendor/bin/pint --dirty
-docker compose exec php php artisan tinker
+# macOS / Linux
+lsof -nP -iTCP -sTCP:LISTEN | grep -E ':(80|5432|6379|8080|5173) '
 ```
 
-`docker compose exec php` is worth preferring over `docker exec -it {project}-php`
-— it addresses the service rather than the container name, so the same command
-works in every project without substituting anything.
+Usual culprits: a local Apache, a Homebrew Postgres, or another project from this
+same family. Stop it, or move the host side of the port as section 11 describes.
 
-Running those from the host fails, and the error is worth recognising on sight:
-`could not translate host name "pg_db"`. The host has no idea what `pg_db` is —
-that name only exists on the Compose network. Same for `redis`.
+### Step 2: Get the code
 
-The `.env` values that matter for this topology:
+```bash
+git clone {repository-url} {project}
+cd {project}
+```
+
+Check that `.docker/` and `docker-compose.yml` came with the checkout. If
+`.docker/php/Dockerfile.dev` is missing there's nothing to build — section 3 has
+the expected layout.
+
+### Step 3: Write `.env` before anything starts
+
+Compose reads `${DB_DATABASE}`, `${DB_USERNAME}` and `${DB_PASSWORD}` out of
+`.env` to create the Postgres role, and Postgres only honours them the first time
+the data volume is created. Fix them later and nothing happens — you'd have to
+`docker compose down -v` and start over, which destroys the database.
+
+```bash
+cp .env.example .env
+```
+
+Set at least these:
 
 ```dotenv
+APP_URL=http://{project}.local
 DB_CONNECTION=pgsql
 DB_HOST=pg_db          # the service name, not 127.0.0.1
 DB_PORT=5432
+DB_DATABASE={project}
+DB_USERNAME={project}
+DB_PASSWORD=<pick one>
 REDIS_HOST=redis
 REDIS_SEARCH_HOST=redis
 ```
 
-<!-- IMAGE PLACEHOLDER -->
-![Terminal after a successful docker compose up](images/compose-up.png)
-<!-- Suggested capture: the tail of `docker compose up -d --build`, with all
-     five services created. -->
+`DB_HOST=pg_db` is the line people get wrong. Containers find each other by
+service name; `127.0.0.1` points the PHP container at itself.
+
+### Step 4: Point the hostname at your machine
+
+nginx answers on whatever `server_name` is set in `.docker/nginx/default.conf`,
+so add a matching hosts entry:
+
+```bash
+# macOS / Linux
+sudo sh -c 'echo "127.0.0.1  {project}.local" >> /etc/hosts'
+
+# Windows: edit C:\Windows\System32\drivers\etc\hosts as Administrator
+```
+
+Read the checked-in `server_name` first — a copied `default.conf` often still
+carries the previous project's hostname.
+
+### Step 5: Build and start
+
+```bash
+docker compose up -d --build
+```
+
+The first run pulls the base images and compiles the PHP extensions, so give it a
+few minutes. After that, `--build` is only needed when `Dockerfile.dev` changes.
+
+### Step 6: Check all five containers are up
+
+```bash
+docker compose ps
+```
+
+You want `php`, `nginx`, `pg_db`, `adminer` and `redis`, all `Up`. If one is in a
+restart loop, read its log before going further:
+
+```bash
+docker compose logs -f php
+```
+
+### Step 7: Install dependencies and generate the app key
+
+```bash
+docker compose exec php composer install
+docker compose exec php php artisan key:generate
+```
+
+Everything PHP-side runs inside the container. Prefer `docker compose exec php`
+over `docker exec -it {project}-php` — it addresses the service instead of the
+container name, so the same command works in every project. `vendor/` still shows
+up in your working copy, because the bind mount goes both ways.
+
+### Step 8: Create the schema
+
+```bash
+docker compose exec php php artisan migrate
+
+# or, if the project ships seeders
+docker compose exec php php artisan migrate --seed
+```
+
+`could not translate host name "pg_db"` means the command ran on the host instead
+of in the container. That name only exists on the Compose network, same for
+`redis`.
+
+### Step 9: Build the front-end assets
+
+```bash
+docker compose exec php npm install
+docker compose exec php npm run build
+```
+
+Skip this and the app still boots, but the first page load fails with
+`Unable to locate file in Vite manifest`.
+
+### Step 10: Check the PHP config is actually applied
+
+```bash
+docker compose exec php php -i | grep -E "memory_limit|upload_max_filesize"
+```
+
+`2048M` and `50M` mean `php.ini` is wired up. `128M` and `2M` mean it's inert and
+PHP is on stock defaults — see section 6.
+
+### Step 11: Open it
+
+| What | Where |
+| --- | --- |
+| App panel | `http://{project}.local/app` |
+| Admin panel | `http://{project}.local/admin` |
+| Adminer | `http://localhost:8080` — system PostgreSQL, server `pg_db`, credentials from `.env` |
+
+### Step 12: Start the optional processes
+
+None of these run on their own in development. Each wants its own terminal:
+
+```bash
+docker compose exec php php artisan queue:listen --tries=1 --timeout=0
+docker compose exec php php artisan schedule:work
+docker compose exec php npm run dev -- --host 0.0.0.0
+```
+
+### After the first time
+
+```bash
+docker compose up -d          # start
+docker compose ps             # what is running
+docker compose logs -f php    # follow one service
+docker compose down           # stop, keep the data
+```
 
 ---
 
-## 7. The applications it serves
+## 8. What it serves
 
 One codebase, several front doors, all through the same two containers.
 
@@ -310,19 +508,11 @@ One codebase, several front doors, all through the same two containers.
 | Adminer | `http://localhost:8080` | the adminer container; server `pg_db`, credentials from `.env` |
 | Vite dev server | `http://localhost:5173` | the php container, started by hand |
 
-nginx answers on whatever `server_name` is set in `.docker/nginx/default.conf`,
-so you want a matching hosts entry:
-
-```
-127.0.0.1  {project}.local
-```
-
-Check the checked-in value before assuming — a copied `default.conf` often still
-carries the *previous* project's hostname, which is harmless until it confuses
-someone. `http://localhost` works too, since there is only one server block and
-it ends up being the default, but any absolute URL Laravel generates follows
-`APP_URL`. Pick one and keep the two in sync, or you get mixed-host redirects.
-
+The hostname comes from `server_name` in `.docker/nginx/default.conf`, matched by
+the hosts entry from step 4. `http://localhost` works too, since there's only one
+server block and it ends up being the default — but absolute URLs Laravel
+generates follow `APP_URL`. Pick one host and keep the two in sync, or you get
+mixed-host redirects.
 
 ### Front-end assets
 
@@ -334,36 +524,16 @@ docker compose exec php npm run build
 docker compose exec php npm run dev -- --host 0.0.0.0
 ```
 
-That `--host 0.0.0.0` is not optional. Unless `vite.config.js` sets
-`server.host`, Vite binds to localhost *inside* the container, and the published
-port 5173 looks dead from your browser even though the process is clearly
-running. Either pass the flag or add `server.host: '0.0.0.0'` to the config.
+`--host 0.0.0.0` isn't optional. Unless `vite.config.js` sets `server.host`, Vite
+binds to localhost inside the container and port 5173 looks dead from your
+browser even though the process is running. Pass the flag, or add
+`server.host: '0.0.0.0'` to the config.
 
 ---
 
-## 8. Things the code may expect that Compose does not start
+## 9. What the code may expect that Compose doesn't start
 
-**Kafka.** The image installs `rdkafka`, and a project with a `config/kafka.php`
-will have topics defined, but there is usually no broker in Compose. Point
-`KAFKA_BROKERS` at an external one, or add a service:
-
-```yaml
-  kafka:
-    image: bitnami/kafka:latest
-    container_name: {project}-kafka
-    environment:
-      KAFKA_CFG_NODE_ID: 0
-      KAFKA_CFG_PROCESS_ROLES: controller,broker
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-    ports:
-      - "9092:9092"
-```
-
-Then `KAFKA_BROKERS=kafka:9092`.
-
-**Queue worker and scheduler.** No containers for these in the dev setup, so run
+**Queue worker and scheduler.** No containers for these in development, so run
 them by hand:
 
 ```bash
@@ -371,26 +541,26 @@ docker compose exec php php artisan queue:listen --tries=1 --timeout=0
 docker compose exec php php artisan schedule:work
 ```
 
-In production these are what `supervisord.conf` is for — one container running
-fpm and the worker together, rather than remembering to start them.
+In production that's what `supervisord.conf` is for — one container running fpm
+and the worker together.
 
 **Mail.** Nothing catches outbound mail. Use `MAIL_MAILER=log`, or add a Mailpit
-service if you need to look at rendered messages.
+service if you need to see rendered messages.
 
 **Stale volumes.** Watch for volumes declared in `docker-compose.yml` that no
-service mounts — `phpmyadmin_sessions` and `db_data` are common leftovers from a
+service mounts. `phpmyadmin_sessions` and `db_data` are common leftovers from a
 MySQL-era version of the file. Safe to delete.
 
 ---
 
-## 9. The other half: building for production
+## 10. Building for production
 
-Everything above is a development setup, and it leans on things you do not want
-in production: a bind-mounted working copy, build tools left in the image, a root
-user, no compiled assets in the image at all.
+The development setup leans on things you don't want in production: a
+bind-mounted working copy, build tools in the image, a root user, no compiled
+assets.
 
-The production pattern is a three-stage build. The idea is that the image you
-ship is assembled by throwing most of the build away:
+Production is a three-stage build, where most of the build gets thrown away
+before shipping:
 
 ```
 +-----------------+
@@ -410,33 +580,31 @@ ship is assembled by throwing most of the build away:
 +------------------+     +------------------+
 ```
 
-Stage one is `node:22-alpine`: `npm ci`, `npm run build`, done. Stage two is
-`php:8.4-fpm-alpine` with all the `-dev` headers and compilers, where extensions
-get built and `composer install --no-dev --optimize-autoloader` runs. Stage three
+Stage one is `node:22-alpine`: `npm ci`, `npm run build`. Stage two is
+`php:8.4-fpm-alpine` with the `-dev` headers and compilers, where extensions get
+built and `composer install --no-dev --optimize-autoloader` runs. Stage three
 starts from a clean `php:8.4-fpm-alpine` and copies in only the compiled
-extensions, the config, and the application — no compilers, no headers, no npm.
+extensions, the config and the application — no compilers, no headers, no npm.
 
-Four things that buys you: a much smaller image, no build toolchain in
-production, assets built once and shared between the PHP and nginx images, and
-layer caching that actually holds because the volatile steps come last.
+You get a much smaller image, no build toolchain in production, assets built once
+and shared between the PHP and nginx images, and layer caching that holds because
+the volatile steps come last.
 
-The runtime stage also does two things that are easy to skip and awkward to
-retrofit. It drops privileges before the entrypoint, and it strips setuid bits to
-shrink the attack surface:
+The runtime stage also drops privileges and strips setuid bits:
 
 ```dockerfile
 RUN find /usr/local -type f -perm /6000 -exec chmod a-s {} + || true
 USER www-data
 ```
 
-The nginx side gets the same treatment as its own small image: `nginx:alpine`,
-config copied in, and `public/` pulled from the node stage, so the web server
-serves built assets without ever mounting your source tree.
+nginx gets its own small image: `nginx:alpine`, config copied in, and `public/`
+pulled from the node stage, so it serves built assets without mounting your
+source tree.
 
 ### Overriding Compose for production
 
-Keep the dev `docker-compose.yml` as the base and layer a production file on top,
-rather than maintaining two full copies:
+Keep the dev `docker-compose.yml` as the base and layer a production file on top
+instead of maintaining two full copies:
 
 ```yaml
 # docker-compose.prod.yml
@@ -459,9 +627,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-Two details worth copying while you are in there. Give Postgres a real
-healthcheck instead of relying on `depends_on`, which only waits for the
-container to start, not for the database to accept connections:
+Two details worth copying. Give Postgres a real healthcheck — `depends_on` only
+waits for the container to start, not for the database to accept connections:
 
 ```yaml
     healthcheck:
@@ -471,8 +638,7 @@ container to start, not for the database to accept connections:
       retries: 5
 ```
 
-And bound Redis memory, because an unbounded cache container will happily eat the
-host:
+And bound Redis memory, or the cache container will happily eat the host:
 
 ```yaml
     command: >
@@ -482,32 +648,23 @@ host:
       --maxmemory-policy allkeys-lru
 ```
 
-If `docker-compose.yml` declares no explicit network, everything lands on the
-Compose default. That works, but naming one makes the topology obvious and stops
-a stray container joining by accident.
-
-### Pushing images
-
-```bash
-docker tag {project}-php {registry}/{project}-php:latest
-docker push {registry}/{project}-php:latest
-```
+If `docker-compose.yml` declares no network, everything lands on the Compose
+default. That works, but naming one makes the topology obvious and stops a stray
+container joining by accident.
 
 ---
 
-## 10. Pointing this at a different application
+## 11. Reusing this on another app
 
-Nothing application-specific is baked into the dev image, so moving the setup to
-another Laravel project is mostly renaming. This is not hypothetical — the same
-recipe runs several of these projects side by side on one machine, each with its
-own copy of `.docker/`.
+Nothing app-specific is baked into the dev image, so moving the setup to another
+Laravel project is mostly renaming. The same recipe runs several of these
+projects side by side on one machine, each with its own copy of `.docker/`.
 
 Copy `.docker/` and `docker-compose.yml` across, then work through these five.
 
-**Rename the containers.** This is the one that bites first. `container_name:`
-values are fixed strings, so two projects both claiming `{project}-php` cannot
-run at the same time — the second `up` fails with a name conflict. Three ways
-out, best last:
+**Rename the containers.** `container_name:` values are fixed strings, so two
+projects both claiming `{project}-php` can't run at once — the second `up` fails
+with a name conflict. Three ways out, best last:
 
 ```yaml
     container_name: newproject-php        # rename every prefix by hand
@@ -519,63 +676,58 @@ out, best last:
     container_name: ${APP_SLUG}-php       # one .env value drives all five
 ```
 
-The third is what makes the template genuinely reusable: set `APP_SLUG` in
-`.env` and the compose file itself never needs editing again.
+The third makes the template properly reusable: set `APP_SLUG` in `.env` and the
+compose file never needs editing again.
 
-**Move the host ports.** 80, 5432, 6379, 8080 and 5173 are all
-single-occupancy. Shift the host side for the second project — `8081:80`,
-`5433:5432`, and so on. The container side stays put, so no application config
-changes. Same trick applies here: `"${HTTP_PORT:-80}:80"` beats hardcoding.
+**Move the host ports.** 80, 5432, 6379, 8080 and 5173 are single-occupancy.
+Shift the host side for the second project — `8081:80`, `5433:5432`, and so on.
+The container side stays put, so no application config changes. Same trick here:
+`"${HTTP_PORT:-80}:80"` beats hardcoding.
 
-**Change `server_name`** in `.docker/nginx/default.conf` to `{project}.local`,
-and add the matching hosts entry. This is the step people forget, because the
-site still loads on `http://localhost` and the stale hostname goes unnoticed.
+**Change `server_name`** in `.docker/nginx/default.conf` to `{project}.local` and
+add the matching hosts entry. Easy to forget, because the site still loads on
+`http://localhost`.
 
 **Swap the database if the app is MySQL.** `pdo_mysql` and the MySQL client are
-already in the image, so it is just replacing the `pg_db` service with `mysql:8`
+already in the image, so it's just replacing the `pg_db` service with `mysql:8`
 and setting `DB_CONNECTION=mysql`, `DB_HOST=mysql`.
 
-**Drop what you do not need.** Redis Stack is only there for RediSearch — plain
+**Drop what you don't need.** Redis Stack is only there for RediSearch — plain
 `redis:alpine` is lighter if the app just caches. Adminer goes if you use a
 desktop client.
 
-For a non-Laravel PHP app the only extra change is the nginx `root`, since
+For a non-Laravel PHP app, the only extra change is the nginx `root`, since
 `/var/www/public` assumes Laravel's layout.
-
-<!-- IMAGE PLACEHOLDER -->
-![Two projects running side by side on different host ports](images/multi-project-ports.png)
-<!-- Suggested capture: `docker compose ps` for two projects at once, showing
-     the remapped host ports. -->
 
 ### Where to add your own things
 
-Additions have to land in the right stage. System packages needed only to
-*compile* something go in the build stage; anything the running app needs at
-runtime has to be repeated in the runtime stage, or the extension loads against a
-library that is not there. That duplication looks redundant and is not.
+Additions have to land in the right stage. Packages needed only to compile
+something go in the build stage; anything the running app needs has to be
+repeated in the runtime stage, or the extension loads against a library that
+isn't there. The duplication looks redundant but isn't.
 
-Built-in PHP extensions go through `docker-php-ext-install`; PECL ones through
+Built-in PHP extensions go through `docker-php-ext-install`, PECL ones through
 `pecl install X && docker-php-ext-enable X`. New services join Compose with a
 service name, a container name, and the shared network.
 
 ---
 
-## 11. When it breaks
+## 12. When it breaks
 
 | What you see | What it usually is | What to do |
 | --- | --- | --- |
 | `502 Bad Gateway` | php container down, or fpm not listening | `docker compose logs php`; check the pool is on `0.0.0.0:9000` |
 | `could not translate host name "pg_db"` | Command run on the host, not in the container | Prefix it with `docker compose exec php` |
-| Name conflict on `up` | Another project using the same `container_name` | See section 10 |
+| Name conflict on `up` | Another project using the same `container_name` | See section 11 |
 | Postgres rejects the password after an `.env` edit | Credentials only apply when the volume is first created | `docker compose down -v` and up again, which destroys the database |
-| `413 Request Entity Too Large` | Upload over a limit | nginx allows 100M; PHP may still be on the stock 2M, see section 5 |
+| `413 Request Entity Too Large` | Upload over a limit | nginx allows 100M; PHP may still be on the stock 2M, see section 6 |
 | `Unable to locate file in Vite manifest` | Assets never built | `docker compose exec php npm run build` |
-| `localhost:5173` refuses to connect | Vite bound inside the container | Add `--host 0.0.0.0`, see section 7 |
+| `localhost:5173` refuses to connect | Vite bound inside the container | Add `--host 0.0.0.0`, see section 8 |
 | `storage` permission errors | `entrypoint.sh` not wired up | Wire it, or `docker compose exec php chown -R www-data:www-data storage bootstrap/cache` |
 | Search returns nothing | Wrong Redis image, or index never built | Confirm `redis/redis-stack-server`, then rebuild the index |
-| Config changes have no effect | The file is not mounted or copied | Check with `php -i`, see section 5 |
+| Config changes have no effect | The file isn't mounted or copied | Check with `php -i`, see section 6 |
 
-Resetting, in increasing order of regret:
+Resetting:
 
 ```bash
 docker compose down                    # stop, keep the data
@@ -583,10 +735,9 @@ docker compose down -v                 # stop and delete volumes, database inclu
 docker compose build --no-cache php    # rebuild after editing Dockerfile.dev
 ```
 
-
 ---
 
-## 12. Command reference
+## 13. Command reference
 
 ```bash
 docker compose up -d --build            # build and start
